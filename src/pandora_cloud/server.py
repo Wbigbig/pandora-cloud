@@ -8,7 +8,7 @@ from os.path import join, abspath, dirname
 import httpx
 from flask import Flask, jsonify, request, render_template, redirect, url_for, make_response
 from pandora.exts.hooks import hook_logging
-from pandora.exts.token import check_access_token
+from pandora.exts.token import check_access_token, get_token_by_name
 from pandora.openai.auth import Auth0
 from waitress import serve
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -65,6 +65,7 @@ class ChatBot:
         app.route('/auth/login_share')(self.login_share_token)
         app.route('/auth/login', methods=['POST'])(self.login_post)
         app.route('/auth/login_token', methods=['POST'])(self.login_token)
+        app.route('/auth/login_name', methods=['POST'])(self.login_name)
 
         if not self.debug:
             self.logger.warning('Serving on http://{}:{}'.format(host, port))
@@ -217,6 +218,33 @@ class ChatBot:
                 error = str(e)
 
         return jsonify({'code': 500, 'message': 'Invalid access token: {}'.format(error)})
+
+
+    async def login_name(self):
+        login_name = request.form.get('login_name')
+        next_url = request.form.get('next')
+        error = None
+
+        if login_name:
+            try:
+                access_token = get_token_by_name(login_name)
+                if access_token is None:
+                    raise Exception('cannot find your account')
+
+                payload = check_access_token(access_token)
+                if True == payload:
+                    ti = await self.__fetch_share_tokeninfo(access_token)
+                    payload = {'exp': ti['expire_at']}
+
+                resp = jsonify({'code': 0, 'url': next_url if next_url else '/'})
+                self.__set_cookie(resp, access_token, payload['exp'])
+
+                return resp
+            except Exception as e:
+                error = str(e)
+
+        return jsonify({'code': 500, 'message': 'Invalid name: {}'.format(error)})
+    
 
     async def chat(self, conversation_id=None):
         err, user_id, email, _, _ = await self.__get_userinfo()
